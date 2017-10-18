@@ -1,0 +1,314 @@
+/*****************************************************************************************
+* Service       :svc_aadhar_dsply.pc                                                     *
+* Description   : This sevice is to support svc_insta_acc.pc to make insert in           *
+*                 aadhar data vault                                                      *
+*                                                                                        *
+* Input         :                                                                        *
+*                                                                                        *
+* Output        : Success/Failure                                                        *
+*                                                                                        *
+* Author        : 3i-infotech                                                            *
+*                                                                                        *
+* Version       :1.0 intital version                                                     *
+*                                                                                        *
+*                                                                                        *
+*****************************************************************************************/
+
+#include <atmi.h>
+#include <userlog.h>
+#include <fml32.h>
+#include <string.h>
+#include <fml_mf.h>
+#include <fml_def.h>
+#include <eba.h>
+#include <sqlca.h> 
+#include <fn_read_debug_lvl.h>
+
+#define TOTAL_FML 4
+
+EXEC SQL INCLUDE "table/iid_info_identification_dtls.h";
+EXEC SQL INCLUDE "table/ipd_info_personal_dtls.h";
+EXEC SQL INCLUDE "table/ikd_info_kra_dtls.h";
+EXEC SQL INCLUDE "table/vlt_uid_dtls.h";
+EXEC SQL INCLUDE "table/uad_uidai_auth_dtls.h";
+
+void SVC_AADHAR_DSPLY(TPSVCINFO * rqst) 
+{
+	int i;
+	int i_err_op[TOTAL_FML]; /*Error array */
+	int i_ferr[TOTAL_FML]; /*Error array */
+	long l_sssn_id;
+
+	char c_usr_id[LEN_UAC_USR_ID];
+	char c_mtch_accnt[LEN_UAC_CLM_MTCH_ACCNT];
+	char c_ServiceName[33];
+	char c_errmsg[256];
+	char c_msg_typ;
+	char c_get;
+	char c_set;
+	
+	MEMSET(sql_vud_uid_no);
+
+	FBFR32 * ptr_fml_Ibuffer; /*Input buffer*/
+	FBFR32 * ptr_fml_Obuffer; /*Output buffer*/
+	FBFR32 * ptr_fml_Sbuffer; /*Send buffer*/
+	FBFR32 * ptr_fml_Rbuffer; /*OUT buffer*/
+	
+	c_msg_typ ='';
+	c_get = 'G';
+	c_set = 'S';
+	memset(c_usr_id, 0, strlen(c_usr_id));
+
+	ptr_fml_Ibuffer = (FBFR32 *)rqst->data;
+	strcpy(c_ServiceName, rqst->name);
+	INITDBGLVL(c_ServiceName);
+
+	i_err_op[0] = Fget32(ptr_fml_Ibuffer,FML_USR_ID, 0,(char *)c_usr_id,0 );
+	i_err_op[1] = Fget32(ptr_fml_Ibuffer,FML_SSSN_ID, 0,(char *)&l_sssn_id,0 );	
+	i_err_op[2] = Fget32(ptr_fml_Ibuffer,FML_MSG_TYP, 0,(char *)c_msg_typ,0 );
+
+	for(i = 0; i < 3; i++)
+	{
+		 if(in_err[i] == -1)
+		 {
+		   userlog("Error while processing field %d", i);
+		   errlog(c_ServiceName,"S31005", FMLMSG, (char *)c_usr_id, l_sssn_id, c_err_msg);
+		   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+		   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer , 0L, 0);
+		 }
+	}
+	/**Alocating Ouput buffer**/
+	ptr_fml_Obuffer = (FBFR32 *) tpalloc ("FML32", NULL, MIN_FML_BUF_LEN);
+
+		if(ptr_fml_Obuffer == NULL)
+		{
+		  errlog(c_ServiceName, "S31010",TPMSG, c_usr_id, l_sssn_id, c_err_msg);
+		  Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+		  tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+		}
+
+	if(tpgetlev() ==0 )      
+	{
+		if(l_sssn_id != 0)  
+		{
+		  if( chk_sssn(c_ServiceName,c_usr_id,l_sssn_id,c_err_msg) == -1)
+		  {
+			Fadd32( ptr_fml_Ibuffer,FML_ERR_MSG, c_err_msg, 0 );
+			tpfree( (char *) ptr_fml_Obuffer);
+			tpreturn(TPFAIL,0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+		  }
+		}                
+	}
+
+	/**Alocating Send buffer**/
+	ptr_fml_Sbuffer = (FBFR32 *) tpalloc ("FML32", NULL, MIN_FML_BUF_LEN);
+
+		if(ptr_fml_Sbuffer == NULL)
+		{
+		  tpfree((char *)ptr_fml_Obuffer);
+		  errlog(c_ServiceName, "S31010",TPMSG, c_usr_id, l_sssn_id, c_err_msg);
+		  Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+		  tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+		}
+
+	/**Alocating recive buffer**/
+	ptr_fml_Rbuffer = (FBFR32 *) tpalloc ("FML32", NULL, MIN_FML_BUF_LEN);
+
+		if(ptr_fml_Rbuffer == NULL)
+		{
+		  tpfree((char *)ptr_fml_Obuffer);
+		  tpfree((char *)ptr_fml_Sbuffer);
+		  errlog(c_ServiceName, "S31015",TPMSG, c_usr_id, l_sssn_id, c_err_msg);
+		  Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+		  tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+		}
+	
+
+	if (c_msg_typ = 'G')
+	{
+	 
+		EXEC SQL
+			 SELECT UAC_CLM_MTCH_ACCNT 
+			 INTO	:c_mtch_accnt
+			 FROM	UAC_USR_ACCNTS 
+			 WHERE	UAC_USR_ID = :c_usr_id;
+
+		if (SQLCODE != 0)
+		{
+			tpfree((char *)ptr_fml_Obuffer);
+			errlog(c_ServiceName,"S31025",SQLMSG,(char *)c_usr_id,l_sssn_id, c_err_msg);
+			Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+			tpreturn(TPFAIL, 0L,(char *)ptr_fml_Ibuffer,0L,0);
+		}
+
+		EXEC SQL
+			DECLARE cur_pds CURSOR FOR
+			SELECT IID_NO,
+				   IPD_DOB,
+				   IPD_SEX,
+				   NVL(IPD_FIRST_NAME,'')||' '||NVL(IPD_MIDDLE_NAME, '')||''|| NVL(IPD_LAST_NAME,''),
+				   IPD_TYPE,
+				   IKD_UID_REF,
+				   IKD_AUTHNTI_STUS
+			FROM  IMJD_INFO_MF_JH_DTLS,
+				  IPD_INFO_PERSONAL_DTLS,
+				  IID_INFO_IDENTIFICATION_DTLS,
+				  IKD_INFO_KRA_DTLS
+			WHERE IMJD_MATCH_ACCOUNT_NO = :c_mtch_accnt
+			AND   IPD_JH_ALIAS = IMJD_JH_ALIAS
+			AND   IMJD_SERIAL_NO = IPD_SERIAL_NO
+			AND   IMJD_SERIAL_NO = IID_SERIAL_NO
+			AND   IPD_TYPE = 'INV_HOLDER_JH'
+			AND   IID_TYPE = 'PAN_INV_JH'
+			AND	  IKD_PAN_NO = IID_NO
+			AND   IID_JH_ALIAS = IPD_JH_ALIAS
+			AND   IMJD_ACT_DEACT_FLAG   = 'A';
+	
+		if (SQLCODE != 0)
+		{
+			tpfree((char *)ptr_fml_Obuffer);
+			errlog(c_ServiceName,"S31025",SQLMSG,(char *)c_usr_id,l_sssn_id, c_err_msg);
+			Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+			tpreturn(TPFAIL, 0L,(char *)ptr_fml_Ibuffer,0L,0);
+		}
+		 
+		EXEC SQL OPEN cur_pds;
+
+		while(1)
+		{
+			EXEC SQL
+			FETCH	cur_pds
+			INTO	:sql_iid_no,
+					:sql_ipd_dob,
+					:sql_ipd_sex
+					:sql_uad_name,
+					:sql_iip_type,
+					:sql_ikd_uid_ref,
+					:sql_ikd_authnti_stus;
+				;
+
+			if (SQLCODE == NO_DATA_FOUND)
+			{
+				EXEC SQL CLOSE cur_pds;
+				break;
+			}
+
+			if (SQLCODE != 0 )
+			{
+				EXEC SQL CLOSE cur_pds;			
+				tpfree((char *)ptr_fml_Obuffer);
+				errlog(c_ServiceName,"S31030",SQLMSG,(char *)c_usr_id,l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpreturn(TPFAIL, 0L,(char *)ptr_fml_Ibuffer,0L,0);
+			}
+
+			EXEC SQL
+				SELECT IKD_UID_REF
+				INTO	:sql_ikd_uid_ref
+				FROM IKD_INFO_KRA_DTLS
+				WHERE IKD_PAN_NO = :sql_iid_no;
+			
+			if (SQLCODE != 0 )
+			{
+				EXEC SQL CLOSE cur_pds;
+				errlog(c_ServiceName,"S31035",SQLMSG,(char *)c_usr_id, l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpreturn(TPFAIL, 0L,(char *)ptr_fml_Ibuffer,0L,0);
+			}
+
+			i_err_op[0] = Fchg32 (ptr_fml_Sbuffer, FML_O_SYMBOL, (char *)sql_vud_ref_key.arr, 0);
+			i_ferr[0]= Ferror32;
+			i_err_op[1] = Fchg32 (ptr_fml_Sbuffer, FML_MSG_TYP, (char *)c_get, 0);
+			i_ferr[1]= Ferror32;
+
+			for(i=0; i<2; i++)
+			{
+			  if(i_err_op[i] == -1)
+			  {
+				EXEC SQL CLOSE cur_pds;
+				errlog(c_ServiceName, "S31040",FMLMSG , c_usr_id, l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+			  }
+			}
+
+		if((tpcall("SVC_AADHAR_TE",(char *)ptr_fml_Sbuffer, 0, (char **)&ptr_fml_Rbuffer,&l_recvbuff, 0)) == -1)
+			{
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpfree((char *)ptr_fml_Rbuffer);
+				MEMSET(c_err_msg);
+				Fget32(ptr_fml_Rbuffer,FML_ERR_MSG,0,(char *)c_err_msg, 0);
+				errlog(c_ServiceName, "S31045", TPMSG, c_usr_id, l_sssn_id, c_err_msg);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);	
+			}
+
+			i_err_op[0] = Fget32(ptr_fml_Rbuffer, FML_MDC_MAINCODE, 0, (char *)sql_vud_uid_no.arr,0);
+			i_ferr[0]= Ferror32;
+
+			if((i_err_op[0]== -1))											   
+			  {
+				errlog(c_ServiceName, "S31050", Fstrerror32(i_ferr[0]), c_usr_id, l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+			  }
+
+
+
+		}
+	}
+	else if (c_msg_typ = 'S')
+	{
+		i_err_op[0] = Fget32(ptr_fml_Ibuffer, FML_FML_NAME, 0, (char *)sql_ikd_pan_no.arr,0);
+		i_err_op[1] = Fget32(ptr_fml_Ibuffer, FML_MDC_MAINCODE, 0, (char *)sql_vud_uid_no.arr,0);	
+	
+		for(i=0; i<2; i++)
+			{
+			  if(i_err_op[2] == -1)
+			  {
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpfree((char *)ptr_fml_Obuffer);
+				tpfree((char *)ptr_fml_Rbuffer);
+				errlog(c_ServiceName, "S31055", FMLMSG , c_usr_id, l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+			  }
+			}
+
+			i_err_op[0] = Fchg32 (ptr_fml_Sbuffer, FML_MDC_MAINCODE, (char *)sql_vud_uid_no.arr, 0);
+			i_ferr[0]= Ferror32;
+			i_err_op[1] = Fchg32 (ptr_fml_Sbuffer, FML_MSG_TYP, (char *)c_set, 0);
+			i_ferr[1]= Ferror32;
+
+		if((tpcall("SVC_AADHAR_TE",(char *)ptr_fml_Sbuffer, 0, (char **)&ptr_fml_Rbuffer, &l_recvbuff, 0)) == -1)
+			{
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpfree((char *)ptr_fml_Rbuffer);
+				tpfree((char *)ptr_fml_Obuffer);
+				MEMSET(c_err_msg);
+				Fget32(ptr_fml_Rbuffer,FML_ERR_MSG,0,(char *)c_err_msg, 0);
+				errlog(c_ServiceName, "S31045", TPMSG, c_usr_id, l_sssn_id, c_err_msg);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);	
+			}
+
+			i_err_op[0] = Fget32(ptr_fml_Rbuffer, FML_TM, 0, (char *)sql_vud_ref_key.arr,0);
+			i_ferr[0]= Ferror32;
+
+			if((i_err_op[0]== -1))
+			  {
+				errlog(c_ServiceName, "S31050", Fstrerror32(i_ferr[0]), c_usr_id, l_sssn_id, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpfree((char *)ptr_fml_Sbuffer);
+				tpreturn(TPFAIL , 0L , (char *)ptr_fml_Ibuffer , 0L ,0);
+			  }
+
+			  /*
+			  *	Call to store proc
+			  */
+
+
+	}
+
+
+}
