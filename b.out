@@ -1,0 +1,213 @@
+/*****************************************************************************************	 
+* Service       :svc_aadhar_te.pc                                                        *
+* Description   : This sevice is to support svc_insta_acc.pc to make insert in           *
+*                 aadhar data vault                                                      *
+*                                                                                        *
+* Input         :FML_MDC_MAINCODE  UID NO                                                *
+*                FML_PARAM_CC source                                                     *
+* Output        : Success/Failure                                                        *
+*                                                                                        *
+* Author        : 3i-infotech                                                            *
+*                                                                                        *
+* Version       :1.0 intital version                                                     *
+*                                                                                        *
+*                                                                                        *
+*****************************************************************************************/
+
+#include <atmi.h>
+#include <userlog.h>
+#include <fml32.h>
+#include <string.h>
+#include <fml_mf.h>
+#include <fml_def.h>
+#include <eba.h>
+#include <sqlca.h>
+#include <fn_read_debug_lvl.h>
+
+#define TOTAL_FML 4
+
+void SVC_AADHAR_TE(TPSVCINFO * rqst)
+{
+	int i;
+	int i_err_op[TOTAL_FML]; /*Error array */
+	int i_ferr[TOTAL_FML]; /*Error array */
+
+	char c_ServiceName[33];
+	char c_errmsg[256];
+	char c_msg_typ;
+	/* for test */
+	char c_msgbuff[50];
+
+	FBFR32 * ptr_fml_Ibuffer; /*Input buffer*/
+	FBFR32 * ptr_fml_Obuffer; /*Output buffer*/
+
+	EXEC SQL INCLUDE "table/vlt_uid_dtls.h";
+
+	ptr_fml_Ibuffer = (FBFR32 *)rqst->data;
+	ptr_fml_Obuffer = (FBFR32 *)NULL;
+
+	strcpy(c_ServiceName, rqst->name);
+	INITDBGLVL(c_ServiceName);
+
+	MEMSET(sql_vud_uid_no);
+	MEMSET(sql_vud_ref_key);
+	MEMSET(sql_vud_uid_src);
+	MEMSET(sql_vud_ins_date);
+	memset(i_err_op, 0, sizeof(i_err_op));
+	memset(i_ferr, 0, sizeof(i_ferr));
+
+	userlog(" SVC_AADHAR_INSERT service started.");
+
+	i_err_op[0] = Fget32(ptr_fml_Ibuffer, FML_MDC_MAINCODE, 0, (char *)sql_vud_uid_no.arr, 0);
+	i_err_op[1] = Fget32(ptr_fml_Ibuffer, FML_PARAM_CC, 0, (char *)sql_vud_uid_src.arr, 0);
+	i_err_op[2] = Fget32(ptr_fml_Ibuffer, FML_MSG_TYP, 0, (char *)c_msg_typ, 0);
+	
+
+	SETLEN(sql_vud_uid_no);
+	SETLEN(sql_vud_uid_src);
+
+	for (i = 0; i < 3; i++)
+	{
+		userlog("Error in Fget for i = %d", i);
+		errlog(c_ServiceName, "S31005", FMLMSG, DEF_USR, DEF_SSSN, c_err_msg);
+		Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+		tpreturn(TPFAIL, 0L, (char *) ptr_fml_Ibuffer, 0L, 0);
+	}
+
+	userlog("uid_no: %s , source: %s ", sql_vud_uid_no.arr, sql_vud_uid_src.arr);
+
+	/********************* Output Buffer Allocation *********************************/
+	ptr_fml_Obuffer = (FBFR32 * ) tpalloc("FML32", NULL, MIN_FML_BUF_LEN);
+	if (ptr_fml_Obuffer == NULL)
+	{
+	  errlog(c_ServiceName, "S31020", TPMSG, DEF_USR, DEF_SSSN, c_err_msg);
+	  Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+	  tpfree((char * ) ptr_fml_Obuffer);
+	  tpreturn(TPFAIL, 0L, (char *) ptr_fml_Ibuffer, 0L, 0);
+	}
+	/*******************************************************************************/
+
+	if(c_msg_typ == 'S')
+	{
+		EXEC SQL
+		SELECT  VUD_REF_KEY
+		INTO    :sql_vud_ref_key
+		FROM    VLT_UID_DTLS
+		WHERE   VUD_UID_NO = :sql_vud_uid_no;
+
+		if (SQLCODE != 0)
+		{
+		  /*
+		   *    If aadhar number is not present in the uid_dtls table then,
+		   *    key is generated for the aadhar number, and aadhar number
+		   *    and key is inserted in the uid_dtls table.
+		   */
+
+		  if (SQLCODE == NO_DATA_FOUND)
+		  {
+				 userlog("UID_NO not found in UID_DTLS.");
+
+				 if (tpbegin(TRAN_TIMEOUT, 0) == -1)
+					{
+					 tpfree((char * ) ptr_fml_Obuffer);
+					 errlog(c_ServiceName, "S31140", TPMSG, DEF_USR, DEF_SSSN, c_err_msg);
+					 Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+					 tpreturn(TPFAIL, 0L, (char *) ptr_fml_Ibuffer, 0L, 0);
+
+					}
+				 EXEC SQL
+					 SELECT SYS_GUID()
+					 INTO   :sql_vud_ref_key
+					 FROM   DUAL;
+
+				if (SQLCODE != 0)
+				{
+				   tpabort(0);
+				   errlog(c_ServiceName, "S31040", SQLMSG, DEF_USR, DEF_SSSN, c_err_msg);
+				   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				   tpfree((char * )ptr_fml_Obuffer);
+				   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+				}
+
+				 EXEC SQL
+				 INSERT INTO VLT_UID_DTLS
+				   (
+					VUD_UID_NO,
+					VUD_REF_KEY,
+					VUD_UID_SRC,
+					VUD_INS_DATE
+
+				   )
+				 VALUES
+				   (
+					:sql_vud_uid_no,
+					:sql_vud_ref_key,
+					:sql_vud_uid_src,
+					 SYSDATE
+				   );
+
+				if (SQLCODE != 0)
+				{
+				   tpabort(0);
+				   errlog(c_ServiceName, "S31040", SQLMSG, DEF_USR, DEF_SSSN, c_err_msg);
+				   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				   tpfree((char * )ptr_fml_Obuffer);
+				   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+				 }
+
+				if (tpcommit(0) == -1)
+				{
+				   tpabort(0);
+				   errlog(c_ServiceName, "S31045", TPMSG, DEF_USR, DEF_SSSN, c_err_msg);
+				   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				   tpfree((char * ) ptr_fml_Obuffer);
+				   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+				 }
+
+				 Fadd32(ptr_fml_Obuffer, FML_TM, sql_vud_ref_key.arr, 0);
+				 tpreturn(TPSUCCESS, 0, (char * )ptr_fml_Obuffer, 0L, 0);
+			}
+			errlog(c_ServiceName, "S31045", TPMSG, DEF_USR, DEF_SSSN, c_err_msg);
+			Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+			tpfree((char * ) ptr_fml_Obuffer);
+			tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+		}
+			Fadd32(ptr_fml_Obuffer, FML_TM, sql_vud_ref_key.arr, 0);
+			tpreturn(TPSUCCESS, 0, (char *)ptr_fml_Obuffer, 0L, 0);
+	}
+	else if (c_msg_typ == 'G')
+		 {
+			if (Fget32(ptr_fml_Ibuffer, FML_O_SYMBOL, 0, (char *)sql_vud_ref_key.arr, 0))
+			{
+				errlog(c_ServiceName, "S31005", FMLMSG, DEF_USR, DEF_SSSN, c_err_msg);
+				Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+				tpreturn(TPFAIL, 0L, (char *) ptr_fml_Ibuffer, 0L, 0);
+			}
+
+			EXEC SQL
+				SELECT VUD_UID_NO 
+				INTO :sql_vud_uid_no 
+				FROM VLT_UID_DTLS
+				WHERE VUD_REF_KEY = :sql_vud_ref_key;
+
+			if (SQLCODE != 0)
+			{
+			   tpabort(0);
+			   errlog(c_ServiceName, "S31040", SQLMSG, DEF_USR, DEF_SSSN, c_err_msg);
+			   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+			   tpfree((char * )ptr_fml_Obuffer);
+			   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+			}
+			if (SQLCODE == NO_DATA_FOUND)
+			{
+			   tpabort(0);
+			   errlog(c_ServiceName, "S31040", "NO data found for Ref no", DEF_USR, DEF_SSSN, c_err_msg);
+			   Fadd32(ptr_fml_Ibuffer, FML_ERR_MSG, c_err_msg, 0);
+			   tpfree((char * )ptr_fml_Obuffer);
+			   tpreturn(TPFAIL, 0L, (char *)ptr_fml_Ibuffer, 0L, 0);
+			}
+
+			Fadd32(ptr_fml_Obuffer, FML_MDC_MAINCODE, sql_vud_uid_no.arr, 0);
+			tpreturn(TPSUCCESS, 0, (char *)ptr_fml_Obuffer, 0L, 0);
+		}
+}
